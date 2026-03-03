@@ -50,6 +50,7 @@ Return ONLY valid JSON in this exact format:
 
 STRICT RULES:
 - If NO date is present in the receipt, return "" (empty string) for date_time.
+- Convert any found date into ISO format YYYY-MM-DD HH:MM:SS.
 - DO NOT invent or guess a date.
 - Prices must have exactly 2 decimal places.
 - Categories must be one of: {CATEGORIES}
@@ -81,7 +82,7 @@ OCR TEXT:
 
     # 🔒 Extra safety against hallucinated date
     if data.get("date_time"):
-        if not re.search(r"\d{4}-\d{2}-\d{2}", data["date_time"]):
-            data["date_time"] = ""
+        if not re.search(r"\d{4}", data["date_time"]):
+         data["date_time"] = ""
 
     return data
