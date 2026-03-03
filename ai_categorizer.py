@@ -2,6 +2,9 @@ import os
 import json
 import re
 from google import genai
+from dotenv import load_dotenv
+
+load_dotenv()
 
 MODEL = "models/gemini-2.5-flash"
 
