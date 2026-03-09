@@ -1,10 +1,13 @@
 import os
 import json
+import re
 from google import genai
+from dotenv import load_dotenv
 
-# -----------------------------
-# FINAL CATEGORY LIST
-# -----------------------------
+load_dotenv()
+
+MODEL = "models/gemini-2.5-flash"
+
 CATEGORIES = [
     "Food",
     "Transport",
@@ -16,45 +19,47 @@ CATEGORIES = [
     "Other"
 ]
 
-MODEL = "models/gemini-2.5-flash"
 
-
-# -----------------------------
-# RECEIPT AUTO-CATEGORIZATION
-# -----------------------------
-def categorize_receipt(ocr_text: str) -> dict:
+def categorize_receipt(ocr_text: str):
     api_key = os.getenv("GEMINI_API_KEY")
+
     if not api_key:
         raise RuntimeError("GEMINI_API_KEY not set")
 
     client = genai.Client(api_key=api_key)
 
     prompt = f"""
-You are a receipt understanding engine.
+You are a strict receipt parsing engine.
 
-Correct OCR spelling mistakes.
-Categorize each item into ONLY one of these categories:
-{", ".join(CATEGORIES)}
+Extract structured data from the OCR text.
 
-Rules:
-- Output ONLY valid JSON
-- No explanations
-- JSON must start with {{ and end with }}
+Return ONLY valid JSON in this exact format:
 
-Format:
 {{
   "merchant": "",
+  "date_time": "",
   "items": [
     {{
       "name": "",
       "category": "",
-      "price": 0.0
+      "price": 0.00
     }}
   ],
-  "total": 0.0
+  "total": 0.00
 }}
 
-Receipt text:
+STRICT RULES:
+- If NO date is present in the receipt, return "" (empty string) for date_time.
+- Convert any found date into ISO format YYYY-MM-DD HH:MM:SS.
+- DO NOT invent or guess a date.
+- Prices must have exactly 2 decimal places.
+- Categories must be one of: {CATEGORIES}
+- Ignore unrelated receipt metadata.
+- Return JSON only.
+- No explanations.
+- No markdown formatting.
+
+OCR TEXT:
 {ocr_text}
 """
 
@@ -63,63 +68,21 @@ Receipt text:
         contents=prompt
     )
 
-    raw = response.text.strip()
+    raw_text = response.text.strip()
 
-    # Defensive JSON parsing
+    # Remove accidental markdown wrapping
+    raw_text = re.sub(r"```json|```", "", raw_text).strip()
+
     try:
-        data = json.loads(raw)
+        data = json.loads(raw_text)
     except json.JSONDecodeError:
-        start = raw.find("{")
-        end = raw.rfind("}") + 1
-        data = json.loads(raw[start:end])
+        print("RAW MODEL OUTPUT:")
+        print(raw_text)
+        raise ValueError("Model did not return valid JSON")
 
-    # Validate categories
-    for item in data.get("items", []):
-        if item.get("category") not in CATEGORIES:
-            item["category"] = "Other"
+    # 🔒 Extra safety against hallucinated date
+    if data.get("date_time"):
+        if not re.search(r"\d{4}", data["date_time"]):
+         data["date_time"] = ""
 
     return data
-
-
-# -----------------------------
-# MANUAL ITEM AUTO-CATEGORIZE
-# -----------------------------
-def categorize_manual_item(name: str, amount: float) -> dict:
-    api_key = os.getenv("GEMINI_API_KEY")
-    if not api_key:
-        raise RuntimeError("GEMINI_API_KEY not set")
-
-    client = genai.Client(api_key=api_key)
-
-    prompt = f"""
-Categorize this expense into ONLY one of the following categories:
-
-{", ".join(CATEGORIES)}
-
-Item: {name}
-
-Return ONLY the category name.
-No explanations.
-"""
-
-    response = client.models.generate_content(
-        model=MODEL,
-        contents=prompt
-    )
-
-    category = response.text.strip()
-
-    if category not in CATEGORIES:
-        category = "Other"
-
-    return {
-        "merchant": "Manual Entry",
-        "items": [
-            {
-                "name": name,
-                "category": category,
-                "price": amount
-            }
-        ],
-        "total": amount
-    }
